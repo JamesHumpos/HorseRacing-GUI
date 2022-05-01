@@ -1,0 +1,512 @@
+#!/usr/bin/python3
+from guizero import App, Text, PushButton, Window, ButtonGroup, Box, info, yesno, error
+import webbrowser
+import requests
+from urllib.parse import urljoin
+from bs4 import BeautifulSoup
+import urllib.request
+import pandas as pd
+import numpy as np
+import os as sysCmd
+import time
+from gpiozero import Button as PhsyicalButton
+from signal import pause
+from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
+from tkinter.font import names
+# Importing the library
+import psutil
+
+
+# Calling psutil.cpu_precent() for 4 seconds
+
+
+############################################ URLS WE'LL USE ####################################################
+
+cardsurl = "https://www.attheraces.com"
+betsurl = "https://m.skybet.com"
+
+
+############################################ LISTS WE'LL POPULATE LATER ##########################################
+
+namelist=[]
+oddslinks=[]
+oddsraces=[]
+horsepricepairlist =[]
+linksdetailed=[]
+linkssimple=[]
+meetinglist=[]
+namedf=[]
+
+############################## State which URL we're getting our race cards from ##################################
+
+headers = requests.utils.default_headers()
+headers.update({
+    'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0',
+})
+
+## Request info from the ATR races printout page
+souplink = requests.get("https://www.attheraces.com/printouts/", headers=headers)
+soup = BeautifulSoup(souplink.content,"lxml")
+
+## Set up meetings today
+meetingstoday = soup.find_all("h3","h6")
+
+############################################## GET MEETING NAME LIST ##############################################
+
+for meeting in soup.find_all("h3","h6"):
+    name = meeting.get_text()
+    namelist.append(name)
+
+    
+    
+############################################ BUTTON TO KILL CHROMIUM ##############################################
+    
+
+home_button = PhsyicalButton(15)
+off_button = PhsyicalButton(24)
+
+def pressed(button):
+    if button.pin.number == 15:
+        sysCmd.system('sudo killall chromium-browser')
+
+    
+    
+############################################## CARDS SET UP ######################################################
+
+
+
+for race in soup.find_all('section', {'class':'panel push--x-small'}):
+    for link in race.select("a[href$='atrformracecard.pdf']"):
+        links_full = urljoin(cardsurl,link['href'])
+        linkssimple.append(links_full)
+        meetingname = race.find("h3","h6")
+        meetinglist.append(meetingname)
+    for link in race.select("a[href$='atrformtimeformracecardandformdata.pdf']"):
+        links_fulld = urljoin(cardsurl,link['href'])
+        linksdetailed.append(links_fulld)
+
+for i in soup.find_all("h3", "h7"):
+    if i.text != 'Printouts not yet available':
+        namedf.append(i)
+
+d = ({'Meeting':meetinglist,'Races':namedf, 'LinksDetailed':linksdetailed})
+s = ({'Meeting':meetinglist,'Races':namedf,'LinksSimple':linkssimple})
+d = pd.DataFrame(data=d)
+s = pd.DataFrame(data=s)
+
+# makes unique meeting list for today's races for later
+unique_meeting_list = d['Meeting'].unique()
+
+name = d['Races'].iloc[0]
+Races_By_Meetingd = d.loc[d['Races'] == name]
+Races_By_Timed = d.loc[d['Races'] != name]
+#Races_By_Meetingd=Races_By_Meetingd.style.format({'LinksDetailed': make_clickable})
+#Races_By_Timed=Races_By_Timed.style.format({'LinksDetailed': make_clickable})
+
+name = s['Races'].iloc[0]
+Races_By_Meetings = s.loc[s['Races'] == name]
+Races_By_Times = s.loc[s['Races'] != name]
+#Races_By_Meetings=Races_By_Meetings.style.format({'LinksSimple': make_clickable})
+#Races_By_Times=Races_By_Times.style.format({'LinksSimple': make_clickable})
+
+
+Races_By_Meetingd = Races_By_Meetingd.explode(column="Meeting",ignore_index=True)
+MeetingListExc = Races_By_Meetingd['Meeting']
+unique_meeting_list = MeetingListExc.unique()
+Races_By_Meetingd = Races_By_Meetingd.explode(column="Races",ignore_index=True)
+Races_By_Meetings = Races_By_Meetings.explode(column="Meeting",ignore_index=True)
+Races_By_Meetings = Races_By_Meetings.explode(column="Races",ignore_index=True)
+Races_By_Meetingd['Meeting'] ='All at ' + Races_By_Meetingd['Meeting']
+Races_By_Meetings['Meeting'] ='All at ' + Races_By_Meetings['Meeting']
+Races_By_Meetingd = Races_By_Meetingd[['Meeting', 'LinksDetailed']]
+Races_By_Meetings = Races_By_Meetings[['Meeting', 'LinksSimple']]
+
+
+Races_By_Timed = Races_By_Timed.explode(column="Races",ignore_index=True)
+Races_By_Timed = Races_By_Timed.explode(column="Meeting",ignore_index=True)
+Races_By_Timed['Times'] = Races_By_Timed.Races.str.extract('(\d+:\d+)')
+Races_By_Timed['Meeting-Time'] = Races_By_Timed['Meeting'] + '  -  ' + Races_By_Timed['Times']
+Races_By_Timed['Time1'] = pd.to_datetime(Races_By_Timed['Times'], format='%H:%M').dt.time
+Races_By_Timed = Races_By_Timed.sort_values(by='Time1')
+Races_By_Timed = Races_By_Timed[['Meeting-Time', 'LinksDetailed']]
+
+
+Races_By_Times = Races_By_Times.explode(column="Races",ignore_index=True)
+Races_By_Times = Races_By_Times.explode(column="Meeting",ignore_index=True)
+Races_By_Times['Times'] = Races_By_Times.Races.str.extract('(\d+:\d+)')
+Races_By_Times['Meeting-Time'] = Races_By_Times['Meeting'] + '  -  ' + Races_By_Times['Times']
+Races_By_Times['Time1'] = pd.to_datetime(Races_By_Times['Times'], format='%H:%M').dt.time
+Races_By_Times = Races_By_Times.sort_values(by='Time1')
+Races_By_Times = Races_By_Times[['Meeting-Time', 'LinksSimple']]
+
+
+
+   ########################################## BETS SET UP ############################################
+
+    
+    
+## Request info from the SkyBet odds page
+souplink = requests.get("https://m.skybet.com/horse-racing/meetings", headers=headers)
+soup = BeautifulSoup(souplink.content,"lxml")
+
+
+for racepanel in soup.find_all('div', {'class':'cell--link race-grid-col'}):
+    for race in racepanel.find("b","cell-text__line"):
+        meetingname = racepanel.text
+        oddsraces.append(meetingname)
+    for link in racepanel.select('a'):
+        links = link['href']
+        linksfull = urljoin(betsurl,links)
+        oddslinks.append(linksfull)
+
+
+dataset = ({'Race':oddsraces,'Link':oddslinks})
+dataset = pd.DataFrame(data=dataset)
+dataset = dataset.explode(column="Race",ignore_index=True)
+dataset = dataset.explode(column="Link",ignore_index=True)
+dataset['Times'] = dataset.Race.str.extract('(\d+.\d+)')
+
+dataset['Race'] = dataset['Race'].str.strip('(\n)')
+dataset['Race'] = dataset['Race'].str.strip()
+dataset['Meeting'] = dataset.Race.str.strip('(\d+.\d+)')
+dataset['Meeting'] = [i.split()[1] for i in dataset['Meeting']]
+
+dataset = dataset[dataset['Meeting'].isin(namelist)]
+
+dataset['Time1'] = pd.to_datetime(dataset['Times'], format='%H.%M').dt.time
+dataset = dataset.sort_values(by='Time1')
+dataset.reset_index(drop=True,inplace=True)
+
+
+RaceOddsLinks = dataset
+
+# I changed line 204 might need fixing if this doesnt work
+
+df_from=0
+df_to=4
+namesof=RaceOddsLinks['Times']
+linksof=RaceOddsLinks['Link']
+recordstot = len(RaceOddsLinks)
+
+
+def increase_number():
+    global df_from
+    global df_to
+    global namesof
+    global linksof
+    global horsepricepairlist
+    if df_to < 25:
+        df_from += 5
+        df_to += 5
+        #display_numberfrom.value = "Records from" + str(df_from)
+        #display_numberto.value = "Records to" + str(df_to)
+        button1.text= namesof[df_from]
+        button2.text= namesof[(df_from+1)]
+        button3.text= namesof[(df_from+2)]
+        button4.text= namesof[(df_from+3)]
+        button5.text= namesof[df_to]
+        #button1.value= linksof[df_from]
+        #button2.value= linksof[(df_from+1)]
+        #button3.value= linksof[(df_from+2)]
+        #button4.value= linksof[(df_from+3)]
+        #button5.value= linksof[df_to]
+
+def decrease_number():
+    global df_from
+    global df_to
+    global namesof
+    global linksof
+    global horsepricepairlist
+    if df_from > 0:
+        df_from -= 5
+        df_to -= 5
+        #display_numberfrom.value = "Records from" + str(df_from)
+        #display_numberto.value = "Records to" + str(df_to)
+        button1.text= namesof[df_from]
+        button2.text= namesof[(df_from+1)]
+        button3.text= namesof[(df_from+2)]
+        button4.text= namesof[(df_from+3)]
+        button5.text= namesof[df_to]
+        #button1.value= linksof[df_from]
+        #button2.value= linksof[(df_from+1)]
+        #button3.value= linksof[(df_from+2)]
+        #button4.value= linksof[(df_from+3)]
+        #button5.value= linksof[df_to]
+
+def RaceB1Open():
+    webbrowser.get('chromium-browser').open(RaceOddsLinks.loc[RaceOddsLinks['Times'] == button1.text, 'Link'].iloc[0])
+
+def RaceB2Open():
+    webbrowser.get('chromium-browser').open(RaceOddsLinks.loc[RaceOddsLinks['Times'] == button2.text, 'Link'].iloc[0])
+
+def RaceB3Open():
+    webbrowser.get('chromium-browser').open(RaceOddsLinks.loc[RaceOddsLinks['Times'] == button3.text, 'Link'].iloc[0])
+
+def RaceB4Open():
+    webbrowser.get('chromium-browser').open(RaceOddsLinks.loc[RaceOddsLinks['Times'] == button4.text, 'Link'].iloc[0])
+
+def RaceB5Open():
+    webbrowser.get('chromium-browser').open(RaceOddsLinks.loc[RaceOddsLinks['Times'] == button5.text, 'Link'].iloc[0])
+
+
+def LivePricePress():
+    Window3_RaceCard.hide()
+    Window2_TV.hide()
+    Window1_Prices.show()
+
+def RaceCardPress():
+    Window3_RaceCard.show(wait = True)
+    Window2_TV.hide()
+
+def WatchRacePress():
+    Window2_TV.show(wait = True)
+    Window3_RaceCard.hide()
+    
+def HomePress():
+    Window4b_basic.hide()
+    Window4a_detailed.hide()
+    Window3_RaceCard.hide()
+    Window2_TV.hide()
+    Window1_Prices.hide()
+
+## CHANGE TO NEW=0 in the actual code to save battery - chromium also and not safari
+def ATRopen():
+    Window2_TV.hide()
+    webbrowser.get('chromium-browser').open('https://www.attheraces.com/atrplayer', new=0)
+
+## CHANGE TO NEW=0 in the actual code - chromium also and not safari
+def RTVopen():
+    Window2_TV.hide()
+    webbrowser.get('chromium-browser').open('https://www.racingtv.com/videos/watch/live', new=0)
+
+def DetailedOpen():
+    Window4a_detailed.show(wait = True)
+    Window4b_basic.hide()
+    Window3_RaceCard.hide()
+    Window2_TV.hide()
+
+def BasicOpen():
+    Window4b_basic.show(wait = True)
+    Window4a_detailed.hide()
+    Window3_RaceCard.hide()
+    Window2_TV.hide()
+
+def SimpleMeetingOpen():
+    webbrowser.get('chromium-browser').open(Races_By_Meetings.loc[Races_By_Meetings['Meeting'] == SimpleMChoices.value, 'LinksSimple'].iloc[0])
+    Window4b_basic.hide()
+
+def SimpleRacesOpen1():
+    webbrowser.get('chromium-browser').open(Races_By_Times.loc[Races_By_Times['Meeting-Time'] == SimpleRChoicesH1.value, 'LinksSimple'].iloc[0])
+    Window4b_basic.hide()
+    
+def SimpleRacesOpen2():
+    webbrowser.get('chromium-browser').open(Races_By_Times.loc[Races_By_Times['Meeting-Time'] == SimpleRChoicesH2.value, 'LinksSimple'].iloc[0])
+    Window4b_basic.hide()
+
+def DetMeetingOpen():
+    webbrowser.get('chromium-browser').open(Races_By_Meetingd.loc[Races_By_Meetingd['Meeting'] == DetMChoices.value, 'LinksDetailed'].iloc[0])
+    Window4b_basic.hide()
+
+def DetRacesOpen1():
+    webbrowser.get('chromium-browser').open(Races_By_Timed.loc[Races_By_Timed['Meeting-Time'] == DetRChoicesH1.value, 'LinksDetailed'].iloc[0])
+    Window4b_basic.hide()
+    
+def DetRacesOpen2():
+    webbrowser.get('chromium-browser').open(Races_By_Timed.loc[Races_By_Timed['Meeting-Time'] == DetRChoicesH2.value, 'LinksDetailed'].iloc[0])
+    Window4b_basic.hide()
+
+def split_df(Races_By_Times):
+    if len(Races_By_Times) % 2 != 0:
+        Races_By_Times = Races_By_Times.iloc[:-1, :]
+    Races_By_Times_H1, Races_By_Times_H2 =  np.array_split(Races_By_Times, 2)
+    return Races_By_Times_H1, Races_By_Times_H2
+
+
+def split_dfd(Races_By_Timed):
+    if len(Races_By_Timed) % 2 != 0:
+        Races_By_Timed = Races_By_Timed.iloc[:-1, :]
+    Races_By_Timed_H1, Races_By_Timed_H2 =  np.array_split(Races_By_Timed, 2)
+    return Races_By_Timed_H1, Races_By_Timed_H2
+
+                                    ## Simple GUI for navigating the days races
+
+
+
+
+
+
+                                            ## Window 0 -  Home page
+
+
+
+
+app = App(title="RacePad", bg="white", width=1500, height = 800)
+MeetingsTodaytitle = Text(app, text= "Meetings Today:", size=25)
+MeetingNames = Text(app, text=namelist, size=25)
+MeetingNames.text_color = "green"
+
+RaceCardBtnBox = Box(app,align="left",height="fill",width="fill")
+LivePriceBtnBox = Box(app,align="left",height="fill",width="fill")
+WatchBtnBox = Box(app,align="left",height="fill",width="fill")
+
+RaceCardButton = PushButton(RaceCardBtnBox, command=RaceCardPress, image="/home/pi/Documents/CArds.png")
+LivePriceButton = PushButton(LivePriceBtnBox, command=LivePricePress, image="/home/pi/Documents/PRices.png")
+WatchRaceButton = PushButton(WatchBtnBox, command=WatchRacePress, image="/home/pi/Documents/Watch.png")
+home_button.when_pressed = pressed
+
+##home_button.wait_for_press()
+
+                                                      ## Window 1 - Racing TV choice
+
+Window1_Prices = Window(app, title="LivePrices", visible=False, width=1500, height = 800)
+Homebutton0 = PushButton(Window1_Prices, command=HomePress,text="HOME", width=80, height = 2)
+Homebutton0.text_color = "white"
+Homebutton0.bg = "red"
+Homebutton0.text_size = 20
+
+
+PrevRaceBox= Box(Window1_Prices,align="left",height="fill",width="fill")
+prevracebutton = PushButton(PrevRaceBox, text="Previous 5", command=decrease_number)
+prevracebutton.text_size = 15
+
+Race1Box = Box(Window1_Prices,align="left",height="fill",width="fill")
+button1 = PushButton(Race1Box, text=namesof[0],command=RaceB1Open)
+button1.text_size = 15
+
+
+Race2Box = Box(Window1_Prices,align="left",height="fill",width="fill")
+button2 = PushButton(Race2Box, text=namesof[1],command=RaceB2Open)
+button2.text_size = 15
+
+
+Race3Box = Box(Window1_Prices,align="left",height="fill",width="fill")
+button3 = PushButton(Race3Box, text=namesof[2],command=RaceB3Open)
+button3.text_size = 15
+
+
+Race4Box = Box(Window1_Prices,align="left",height="fill",width="fill")
+button4 = PushButton(Race4Box, text=namesof[3],command=RaceB4Open)
+button4.text_size = 15
+
+
+Race5Box = Box(Window1_Prices,align="left",height="fill",width="fill")
+button5 = PushButton(Race5Box, text=namesof[4], command=RaceB5Open)
+button5.text_size = 15
+
+
+NextRaceBox= Box(Window1_Prices,align="left",height="fill",width="fill")
+nextracebutton = PushButton(NextRaceBox, text="Next 5", command=increase_number,width="fill")
+nextracebutton.text_size = 15
+
+
+                                                      ## Window 2 - Racing TV choice
+
+
+
+Window2_TV = Window(app, title="WatchRacing", visible=False, width=1500, height = 800)
+
+
+Homebutton1 = PushButton(Window2_TV, command=HomePress,text="HOME", width=80, height = 2)
+Homebutton1.text_color = "white"
+Homebutton1.bg = "red"
+Homebutton1.text_size = 20
+
+TVChoicetitle = Text(Window2_TV, text= "Which online Racing TV Site?", size=25)
+
+
+ATRbutton = PushButton(Window2_TV, command=ATRopen,text="At the races", width=80, height = 5)
+ATRbutton.text_size = 25
+RTVbutton = PushButton(Window2_TV, command=RTVopen,text="Racing TV", width=80, height = 5)
+RTVbutton.text_size = 25
+
+
+                                                     ## Window 3 - Card level choice
+    
+
+    
+Window3_RaceCard = Window(app, title="ChooseRaceCards",visible=False, width=1500, height = 800)
+Window3_RaceCard.hide()
+
+Homebutton2 = PushButton(Window3_RaceCard, command=HomePress,text="HOME", width=80, height = 2)
+Homebutton2.text_color = "white"
+Homebutton2.bg = "red"
+Homebutton2.text_size = 20
+
+WhichCardsTitle = Text(Window3_RaceCard, text= "Do you want to see detailed or basic racecards?", size=25)
+
+DetailedCardsButton = PushButton(Window3_RaceCard, command=DetailedOpen,text="Detailed - includes tips, form and comments", width=40, height = 2)
+DetailedCardsButton.text_size = 25
+DetailedCardsButton.bg = "white"
+BasicCardsButton = PushButton(Window3_RaceCard, command=BasicOpen,text="Basic - shows form and jockeys, easier to read", width=40, height = 2)
+BasicCardsButton.text_size = 25
+BasicCardsButton.bg = "white"
+
+
+
+                                              ## Window 4a - Detailed Card choice
+
+
+
+Window4a_detailed = Window(app, title="Detailed Racecards", visible=False, width=1500, height = 800)
+Window4a_detailed.hide()
+
+Homebutton3 = PushButton(Window4a_detailed, command=HomePress,text="HOME", width=80, height = 2)
+Homebutton3.text_size = 20
+Homebutton3.text_color = "white"
+Homebutton3.bg = "red"
+
+buttons_box3 = Box(Window4a_detailed, align="left",width="fill")
+buttons_box4 = Box(Window4a_detailed, align="right",width="fill")
+
+## BUtton by meeting
+DetMChoices = ButtonGroup(buttons_box3, options=Races_By_Meetingd['Meeting'], selected=Races_By_Meetingd['Meeting'].iloc[0], command=DetMeetingOpen,align="right",width="fill",height="fill")
+DetMChoices.text_size = 25
+
+## Timed races
+
+Races_By_Timed_H1, Races_By_Timed_H2 = split_dfd(Races_By_Timed)
+
+## Button
+DetRChoicesH1 = ButtonGroup(buttons_box4, options=Races_By_Timed_H1['Meeting-Time'], selected=Races_By_Timed_H1['Meeting-Time'].iloc[0], command=DetRacesOpen1,align="left",width="fill",height="fill")
+DetRChoicesH1.text_size = 18
+
+DetRChoicesH2 = ButtonGroup(buttons_box4, options=Races_By_Timed_H2['Meeting-Time'], selected=Races_By_Timed_H2['Meeting-Time'].iloc[0], command=DetRacesOpen2,align="left",width="fill",height="fill")
+DetRChoicesH2.text_size = 18
+
+
+## Button
+
+
+
+                                ## Window 4b - Basic Card choice
+    
+Window4b_basic = Window(app, title="Basic Racecards", visible=False, width=1500, height = 800)
+Window4b_basic.hide()
+
+Homebutton4 = PushButton(Window4b_basic, command=HomePress,text="HOME", width=80, height = 2)
+Homebutton4.text_size = 20
+Homebutton4.text_color = "white"
+Homebutton4.bg = "red"
+
+buttons_box1 = Box(Window4b_basic, align="left",width="fill")
+buttons_box2 = Box(Window4b_basic, align="right",width="fill")
+
+## BUtton by meeting
+SimpleMChoices = ButtonGroup(buttons_box1, options=Races_By_Meetings['Meeting'], selected=Races_By_Meetings['Meeting'].iloc[0], command=SimpleMeetingOpen,align="right",width="fill",height="fill")
+SimpleMChoices.text_size = 25
+
+## Timed races
+
+Races_By_Times_H1, Races_By_Times_H2 = split_df(Races_By_Times)
+
+## Button
+SimpleRChoicesH1 = ButtonGroup(buttons_box2, options=Races_By_Times_H1['Meeting-Time'], selected=Races_By_Times_H1['Meeting-Time'].iloc[0], command=SimpleRacesOpen1,align="left",width="fill",height="fill")
+SimpleRChoicesH1.text_size = 18
+
+SimpleRChoicesH2 = ButtonGroup(buttons_box2, options=Races_By_Times_H2['Meeting-Time'], selected=Races_By_Times_H2['Meeting-Time'].iloc[0], command=SimpleRacesOpen2,align="left",width="fill",height="fill")
+SimpleRChoicesH2.text_size = 18
+
+## Show app
+
+app.display()
